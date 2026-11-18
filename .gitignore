@@ -1,3 +1,5 @@
-venv
-focusflow.db
+venv/
+instance/
 __pycache__/
+*.db
+.env
