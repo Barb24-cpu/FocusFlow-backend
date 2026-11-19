@@ -199,3 +199,29 @@ found, description = _present(data, "description")
     if errors:
         raise ValidationError(errors)
     return cleaned
+
+def _iso_datetime(value):
+    """Datetime -> '2026-11-19T10:30:00Z' (naive values are treated as UTC)."""
+    if not value:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def task_to_dict(task):
+    """What the frontend (useTasks) receives for a task."""
+    project = getattr(task, "project", None)
+    return {
+        "id": task.id,
+        "title": task.title,
+        "description": task.description or "",
+        "priority": task.priority,
+        "status": task.status,
+        "due_date": task.due_date.isoformat() if task.due_date else None,
+        "completed_at": _iso_datetime(task.completed_at),
+        "project_id": task.project_id,
+        "project_name": project.name if project is not None else None,
+        "created_at": _iso_datetime(getattr(task, "created_at", None)),
+        "updated_at": _iso_datetime(getattr(task, "updated_at", None)),
+    }
