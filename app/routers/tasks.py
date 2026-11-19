@@ -44,3 +44,48 @@ def _commit():
     except Exception:
         db.session.rollback()
         raise
+
+
+@tasks_bp.get("", strict_slashes=False)
+@login_required
+def list_tasks():
+    query = Task.query.filter_by(user_id=current_user().id)
+
+    status = request.args.get("status")
+    if status:
+        normalized = normalize_status(status)
+        if normalized is None:
+            return error_response("Invalid status filter", 400)
+        query = query.filter_by(status=normalized)
+
+    priority = request.args.get("priority")
+    if priority:
+        normalized = normalize_priority(priority)
+        if normalized is None:
+            return error_response("Invalid priority filter", 400)
+        query = query.filter_by(priority=normalized)
+
+    project_id = request.args.get("project_id")
+    if project_id:
+        try:
+            query = query.filter_by(project_id=int(project_id))
+        except ValueError:
+            return error_response("Invalid project_id filter", 400)
+
+    search = request.args.get("search", "").strip()
+    if search:
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        query = query.filter(
+            db.or_(
+                Task.title.ilike(pattern, escape="\\"),
+                Task.description.ilike(pattern, escape="\\"),
+            )
+        )
+
+    tasks = query.all()
+    # Newest first, then (stable sort) earliest due date first with undated tasks last
+    tasks.sort(key=lambda t: t.created_at or datetime.min, reverse=True)
+    tasks.sort(key=lambda t: (t.due_date is None, t.due_date or date.max))
+
+    return jsonify({"tasks": [task_to_dict(t) for t in tasks]})
