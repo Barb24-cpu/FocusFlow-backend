@@ -89,3 +89,78 @@ def list_tasks():
     tasks.sort(key=lambda t: (t.due_date is None, t.due_date or date.max))
 
     return jsonify({"tasks": [task_to_dict(t) for t in tasks]})
+
+
+@tasks_bp.post("", strict_slashes=False)
+@login_required
+def create_task():
+    try:
+        data = validate_task(_json_body())
+    except ValidationError as exc:
+        return error_response(exc.message, 400, exc.errors)
+
+    if data["project_id"] is not None and not _owns_project(data["project_id"]):
+        return error_response("Project not found", 400, {"project_id": "Project not found"})
+
+    task = Task(
+        user_id=current_user().id,
+        completed_at=_utc_now() if data["status"] == "done" else None,
+        **data,
+    )
+    db.session.add(task)
+    _commit()
+    return jsonify({"task": task_to_dict(task)}), 201
+
+
+@tasks_bp.get("/<int:task_id>")
+@login_required
+def get_task(task_id):
+    task = _get_own_task(task_id)
+    if task is None:
+        return error_response("Task not found", 404)
+    return jsonify({"task": task_to_dict(task)})
+
+
+@tasks_bp.route("/<int:task_id>", methods=["PUT", "PATCH"])
+@login_required
+def update_task(task_id):
+    task = _get_own_task(task_id)
+    if task is None:
+        return error_response("Task not found", 404)
+
+    try:
+        changes = validate_task(_json_body(), partial=True)
+    except ValidationError as exc:
+        return error_response(exc.message, 400, exc.errors)
+
+    if not changes:
+        return error_response("No valid fields to update", 400)
+
+    project_id = changes.get("project_id")
+    if project_id is not None and not _owns_project(project_id):
+        return error_response("Project not found", 400, {"project_id": "Project not found"})
+
+    for field, value in changes.items():
+        setattr(task, field, value)
+
+    # Keep completed_at in step with status (the dashboard's weekly chart relies on it)
+    if "status" in changes:
+        if changes["status"] == "done":
+            if task.completed_at is None:
+                task.completed_at = _utc_now()
+        else:
+            task.completed_at = None
+
+    _commit()
+    return jsonify({"task": task_to_dict(task)})
+
+
+@tasks_bp.delete("/<int:task_id>")
+@login_required
+def delete_task(task_id):
+    task = _get_own_task(task_id)
+    if task is None:
+        return error_response("Task not found", 404)
+    db.session.delete(task)
+    _commit()
+    return jsonify({"message": "Task deleted"})
