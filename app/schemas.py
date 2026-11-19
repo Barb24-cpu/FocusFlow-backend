@@ -145,3 +145,57 @@ def validate_task(data, partial=False):
             errors["title"] = "Title must be 200 characters or fewer"
         else:
             cleaned["title"] = title
+
+
+found, description = _present(data, "description")
+    if found:
+        if description is None:
+            cleaned["description"] = ""
+        elif isinstance(description, str) and len(description.strip()) <= 2000:
+            cleaned["description"] = description.strip()
+        else:
+            errors["description"] = "Description must be text of 2000 characters or fewer"
+    elif not partial:
+        cleaned["description"] = ""
+
+    found, priority = _present(data, "priority")
+    if found:
+        normalized = normalize_priority(priority)
+        if normalized is None:
+            errors["priority"] = "Priority must be low, medium or high"
+        else:
+            cleaned["priority"] = normalized
+    elif not partial:
+        cleaned["priority"] = "medium"
+
+    found, status = _present(data, "status")
+    if found:
+        normalized = normalize_status(status)
+        if normalized is None:
+            errors["status"] = "Status must be todo, in_progress or done"
+        else:
+            cleaned["status"] = normalized
+    elif not partial:
+        cleaned["status"] = "todo"
+
+    found, due = _present(data, "due_date", "dueDate")
+    if found:
+        try:
+            cleaned["due_date"] = parse_due_date(due)
+        except ValueError:
+            errors["due_date"] = "Due date must be in YYYY-MM-DD format"
+    elif not partial:
+        cleaned["due_date"] = None
+
+    found, project_id = _present(data, "project_id", "projectId")
+    if found:
+        try:
+            cleaned["project_id"] = parse_project_id(project_id)
+        except (TypeError, ValueError):
+            errors["project_id"] = "Project id must be a number"
+    elif not partial:
+        cleaned["project_id"] = None
+
+    if errors:
+        raise ValidationError(errors)
+    return cleaned
