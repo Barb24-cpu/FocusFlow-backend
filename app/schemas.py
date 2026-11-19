@@ -65,3 +65,47 @@ def validate_login(data):
     if errors:
         raise ValidationError(errors)
     return {"email": email, "password": password}
+
+
+
+# --- Task schemas ---
+
+PRIORITIES = ("low", "medium", "high")
+STATUSES = ("todo", "in_progress", "done")
+
+_STATUS_ALIASES = {
+    "todo": "todo",
+    "to_do": "todo",
+    "pending": "todo",
+    "in_progress": "in_progress",
+    "inprogress": "in_progress",
+    "doing": "in_progress",
+    "done": "done",
+    "complete": "done",
+    "completed": "done",
+}
+
+
+def normalize_status(value):
+    """'To do' / 'in-progress' / 'DONE' -> 'todo' / 'in_progress' / 'done'. None if invalid."""
+    if not isinstance(value, str):
+        return None
+    key = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return _STATUS_ALIASES.get(key)
+
+
+def normalize_priority(value):
+    """'High' -> 'high'. None if invalid."""
+    if not isinstance(value, str):
+        return None
+    key = value.strip().lower()
+    return key if key in PRIORITIES else None
+
+
+def parse_due_date(value):
+    """'2026-11-20' (or a full ISO timestamp) -> date. None/'' -> None. Raises ValueError."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or len(value) < 10:
+        raise ValueError("bad date")
+    return date.fromisoformat(value[:10])
