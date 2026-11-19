@@ -109,3 +109,39 @@ def parse_due_date(value):
     if not isinstance(value, str) or len(value) < 10:
         raise ValueError("bad date")
     return date.fromisoformat(value[:10])
+
+
+def parse_project_id(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError("bad project id")
+    return int(value)
+
+
+def _present(data, *names):
+    """(True, value) for the first key found in data, else (False, None)."""
+    for name in names:
+        if name in data:
+            return True, data[name]
+    return False, None
+
+
+def validate_task(data, partial=False):
+    """
+    Create: validate_task(data)                -> every field filled (with defaults)
+    Update: validate_task(data, partial=True)  -> only the fields that were sent
+
+    Accepts due_date or dueDate, project_id or projectId.
+    """
+    cleaned, errors = {}, {}
+
+    found, title = _present(data, "title")
+    if found or not partial:
+        title = title.strip() if isinstance(title, str) else ""
+        if not title:
+            errors["title"] = "Title is required"
+        elif len(title) > 200:
+            errors["title"] = "Title must be 200 characters or fewer"
+        else:
+            cleaned["title"] = title
