@@ -26,3 +26,20 @@ def _get_token():
     return None
 
 
+def login_required(view):
+    """Decorator: returns 401 JSON unless a valid login token is present."""
+
+    @wraps(view)
+    def wrapper(*args, **kwargs):
+        user = get_current_user()
+        if user is None:
+            return error_response("Authentication required", 401)
+        g.current_user = user
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
+def current_user():
+    """The user set by @login_required. Only call this inside a protected view."""
+    return g.get("current_user")
