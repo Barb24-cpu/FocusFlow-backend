@@ -1,0 +1,227 @@
+import re
+from datetime import date, timezone
+
+
+class ValidationError(Exception):
+    """Raised when request data is invalid. `errors` maps field -> message."""
+
+    def __init__(self, errors):
+        self.errors = errors
+        self.message = next(iter(errors.values())) if errors else "Invalid data"
+        super().__init__(self.message)
+
+
+# --- Auth schemas ---
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_LENGTH = 128
+
+def _clean_email(value):
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+def validate_register(data):
+    """Expects {name | username, email, password}. Returns {name, email, password}."""
+    errors = {}
+
+    name = data.get("name") or data.get("username")  # frontend uses both names
+    name = name.strip() if isinstance(name, str) else ""
+    if not name:
+        errors["name"] = "Name is required"
+    elif len(name) > 100:
+        errors["name"] = "Name must be 100 characters or fewer"
+
+    email = _clean_email(data.get("email"))
+    if not email:
+        errors["email"] = "Email is required"
+    elif len(email) > 254 or not EMAIL_RE.match(email):
+        errors["email"] = "Enter a valid email address"
+
+    password = data.get("password")
+    if not isinstance(password, str) or not password:
+        errors["password"] = "Password is required"
+    elif len(password) < MIN_PASSWORD_LENGTH:
+        errors["password"] = f"Password must be at least {MIN_PASSWORD_LENGTH} characters"
+    elif len(password) > MAX_PASSWORD_LENGTH:
+        errors["password"] = f"Password must be {MAX_PASSWORD_LENGTH} characters or fewer"
+
+    if errors:
+        raise ValidationError(errors)
+    return {"name": name, "email": email, "password": password}
+
+
+def validate_login(data):
+    """Expects {email, password}. Returns {email, password}."""
+    errors = {}
+    email = _clean_email(data.get("email"))
+    password = data.get("password")
+
+    if not email:
+        errors["email"] = "Email is required"
+    if not isinstance(password, str) or not password:
+        errors["password"] = "Password is required"
+
+    if errors:
+        raise ValidationError(errors)
+    return {"email": email, "password": password}
+
+
+
+# --- Task schemas ---
+
+PRIORITIES = ("low", "medium", "high")
+STATUSES = ("todo", "in_progress", "done")
+
+_STATUS_ALIASES = {
+    "todo": "todo",
+    "to_do": "todo",
+    "pending": "todo",
+    "in_progress": "in_progress",
+    "inprogress": "in_progress",
+    "doing": "in_progress",
+    "done": "done",
+    "complete": "done",
+    "completed": "done",
+}
+
+
+def normalize_status(value):
+    """'To do' / 'in-progress' / 'DONE' -> 'todo' / 'in_progress' / 'done'. None if invalid."""
+    if not isinstance(value, str):
+        return None
+    key = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return _STATUS_ALIASES.get(key)
+
+
+def normalize_priority(value):
+    """'High' -> 'high'. None if invalid."""
+    if not isinstance(value, str):
+        return None
+    key = value.strip().lower()
+    return key if key in PRIORITIES else None
+
+
+def parse_due_date(value):
+    """'2026-11-20' (or a full ISO timestamp) -> date. None/'' -> None. Raises ValueError."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or len(value) < 10:
+        raise ValueError("bad date")
+    return date.fromisoformat(value[:10])
+
+
+def parse_project_id(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError("bad project id")
+    return int(value)
+
+
+def _present(data, *names):
+    """(True, value) for the first key found in data, else (False, None)."""
+    for name in names:
+        if name in data:
+            return True, data[name]
+    return False, None
+
+
+def validate_task(data, partial=False):
+    """
+    Create: validate_task(data)                -> every field filled (with defaults)
+    Update: validate_task(data, partial=True)  -> only the fields that were sent
+
+    Accepts due_date or dueDate, project_id or projectId.
+    """
+    cleaned, errors = {}, {}
+
+    found, title = _present(data, "title")
+    if found or not partial:
+        title = title.strip() if isinstance(title, str) else ""
+        if not title:
+            errors["title"] = "Title is required"
+        elif len(title) > 200:
+            errors["title"] = "Title must be 200 characters or fewer"
+        else:
+            cleaned["title"] = title
+
+
+found, description = _present(data, "description")
+    if found:
+        if description is None:
+            cleaned["description"] = ""
+        elif isinstance(description, str) and len(description.strip()) <= 2000:
+            cleaned["description"] = description.strip()
+        else:
+            errors["description"] = "Description must be text of 2000 characters or fewer"
+    elif not partial:
+        cleaned["description"] = ""
+
+    found, priority = _present(data, "priority")
+    if found:
+        normalized = normalize_priority(priority)
+        if normalized is None:
+            errors["priority"] = "Priority must be low, medium or high"
+        else:
+            cleaned["priority"] = normalized
+    elif not partial:
+        cleaned["priority"] = "medium"
+
+    found, status = _present(data, "status")
+    if found:
+        normalized = normalize_status(status)
+        if normalized is None:
+            errors["status"] = "Status must be todo, in_progress or done"
+        else:
+            cleaned["status"] = normalized
+    elif not partial:
+        cleaned["status"] = "todo"
+
+    found, due = _present(data, "due_date", "dueDate")
+    if found:
+        try:
+            cleaned["due_date"] = parse_due_date(due)
+        except ValueError:
+            errors["due_date"] = "Due date must be in YYYY-MM-DD format"
+    elif not partial:
+        cleaned["due_date"] = None
+
+    found, project_id = _present(data, "project_id", "projectId")
+    if found:
+        try:
+            cleaned["project_id"] = parse_project_id(project_id)
+        except (TypeError, ValueError):
+            errors["project_id"] = "Project id must be a number"
+    elif not partial:
+        cleaned["project_id"] = None
+
+    if errors:
+        raise ValidationError(errors)
+    return cleaned
+
+def _iso_datetime(value):
+    """Datetime -> '2026-11-19T10:30:00Z' (naive values are treated as UTC)."""
+    if not value:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def task_to_dict(task):
+    """What the frontend (useTasks) receives for a task."""
+    project = getattr(task, "project", None)
+    return {
+        "id": task.id,
+        "title": task.title,
+        "description": task.description or "",
+        "priority": task.priority,
+        "status": task.status,
+        "due_date": task.due_date.isoformat() if task.due_date else None,
+        "completed_at": _iso_datetime(task.completed_at),
+        "project_id": task.project_id,
+        "project_name": project.name if project is not None else None,
+        "created_at": _iso_datetime(getattr(task, "created_at", None)),
+        "updated_at": _iso_datetime(getattr(task, "updated_at", None)),
+    }
