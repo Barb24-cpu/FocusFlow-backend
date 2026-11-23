@@ -5,18 +5,16 @@ from app.database import db
 from datetime import timedelta
 
 app = Flask(__name__)
+
 app.config["JWT_SECRET_KEY"] = "focusflow-secret"
-app.config["JWT_TOKEN_LOCATION"] = ["cookies", "headers"]
-app.config["JWT_COOKIE_SECURE"] = False
+app.config["JWT_TOKEN_LOCATION"] = ["headers", "cookies"]
+app.config["JWT_COOKIE_SECURE"] = False  # True only on https
 app.config["JWT_COOKIE_SAMESITE"] = "Lax"
 app.config["JWT_COOKIE_CSRF_PROTECT"] = False
-app.config["JWT_ACCESS_COOKIE_NAME"] = "access_token_cookie"
-app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=24)
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///focusflow.db"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-jwt = JWTManager(app)
-CORS(app, supports_credentials=True)
-db.init_app(app)
+
+jwt = JWTManager(app)  # <- AFTER all config
 
 # --- Register Flask Blueprints (SKIP github.py - it's FastAPI, will crash app) ---
 from app.routers.auth import auth_bp
