@@ -2,13 +2,19 @@ from flask_jwt_extended import JWTManager
 from flask import Flask, jsonify
 from flask_cors import CORS
 from app.database import db
+from datetime import timedelta
 
 app = Flask(__name__)
-jwt = JWTManager(app)
-app.config["JWT_TOKEN_LOCATION"] = ["headers"]
+app.config["JWT_SECRET_KEY"] = "focusflow-secret"
+app.config["JWT_TOKEN_LOCATION"] = ["cookies", "headers"]
+app.config["JWT_COOKIE_SECURE"] = False
+app.config["JWT_COOKIE_SAMESITE"] = "Lax"
+app.config["JWT_COOKIE_CSRF_PROTECT"] = False
+app.config["JWT_ACCESS_COOKIE_NAME"] = "access_token_cookie"
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=24)
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///focusflow.db"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["JWT_SECRET_KEY"] = "focusflow-secret"
+jwt = JWTManager(app)
 CORS(app, supports_credentials=True)
 db.init_app(app)
 
