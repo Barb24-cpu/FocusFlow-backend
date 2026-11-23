@@ -34,7 +34,10 @@ app.register_blueprint(analytics_bp)
 app.register_blueprint(subscription_bp)
 with app.app_context():
    from app import models
-   db.create_all()
+   db.init_app(app)
+
+with app.app_context():
+    db.create_all()
 
 @app.route('/')
 def home():
