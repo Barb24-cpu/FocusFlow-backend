@@ -11,9 +11,10 @@ Endpoints (the frontend's authService.js calls exactly these):
 """
 from flask import Blueprint, current_app, jsonify, request
 
-from app.database import database
+from app.database import db
 from app.deps import COOKIE_NAME, current_user, error_response, login_required
-from app.models import userfrom app.schemas import ValidationError, user_to_dict, validate_login, validate_register
+from app.models import User
+from app.schemas import ValidationError, user_to_dict, validate_login, validate_register
 from app.security import create_access_token, hash_password, verify_password
 
 auth_bp =Blueprint("auth", __name__, url_prefix="/auth")
@@ -39,7 +40,7 @@ def _set_auth_cookie(response, token):
     return response
 
 
-    @auth_bp.post("/register")
+@auth_bp.post("/register")
 def register():
     try:
         data = validate_register(_json_body())
@@ -71,7 +72,7 @@ def register():
     return jsonify({"message": "Account created", "user": user_to_dict(user)}), 201
 
 
-    @auth_bp.post("/login")
+@auth_bp.post("/login")
 def login():
     try:
         data = validate_login(_json_body())
@@ -83,7 +84,7 @@ def login():
     if user is None or not verify_password(data["password"], user.password_hash):
         return error_response("Invalid email or password", 401)
 
-    token = create_access_token(user.id)
+    token = create_access_token({"sub": str(user.id), "user_id": user.id})
     response = jsonify({"user": user_to_dict(user)})
     return _set_auth_cookie(response, token)
 

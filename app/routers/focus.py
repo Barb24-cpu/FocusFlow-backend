@@ -23,7 +23,7 @@ def session_to_dict(session):
     }
 
 
-@focus_bp.route("", methods=["GET"])
+@focus_bp.route("/", methods=["GET"])
 @jwt_required()
 def get_sessions():
     user_id = int(get_jwt_identity())
@@ -37,7 +37,7 @@ def get_sessions():
     return jsonify([session_to_dict(s) for s in sessions]), 200
 
 
-@focus_bp.route("", methods=["POST"])
+@focus_bp.route("/", methods=["POST"])
 @jwt_required()
 def save_session():
     user_id = int(get_jwt_identity())

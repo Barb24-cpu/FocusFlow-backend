@@ -5,7 +5,7 @@ from app.database import db
 from app.models import Project, Task, Note
 from app.helpers import to_iso, error, validation_error
 
-projects_bp = Blueprint("projects", __name__)
+projects_bp = Blueprint("projects", __name__, url_prefix="/projects")
 
 
 def project_to_dict(project):
@@ -37,7 +37,7 @@ def check_project_data(data):
     return errors
 
 
-@projects_bp.route("", methods=["GET"])
+@projects_bp.route("/", methods=["GET"])
 @jwt_required()
 def get_projects():
     user_id = int(get_jwt_identity())
@@ -51,7 +51,7 @@ def get_projects():
     return jsonify([project_to_dict(p) for p in projects]), 200
 
 
-@projects_bp.route("", methods=["POST"])
+@projects_bp.route("/", methods=["POST"])
 @jwt_required()
 def create_project():
     user_id = int(get_jwt_identity())

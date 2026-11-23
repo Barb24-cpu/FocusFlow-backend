@@ -38,7 +38,7 @@ def check_project(user_id, value):
     return project_id, None
 
 
-@notes_bp.route("", methods=["GET"])
+@notes_bp.route("/", methods=["GET"])
 @jwt_required()
 def get_notes():
     user_id = int(get_jwt_identity())
@@ -55,7 +55,7 @@ def get_notes():
     return jsonify([note_to_dict(n) for n in notes]), 200
 
 
-@notes_bp.route("", methods=["POST"])
+@notes_bp.route("/", methods=["POST"])
 @jwt_required()
 def create_note():
     user_id = int(get_jwt_identity())
