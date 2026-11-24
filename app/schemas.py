@@ -3,29 +3,24 @@ from datetime import date, timezone
 
 
 class ValidationError(Exception):
-    """Raised when request data is invalid. `errors` maps field -> message."""
-
     def __init__(self, errors):
         self.errors = errors
         self.message = next(iter(errors.values())) if errors else "Invalid data"
         super().__init__(self.message)
 
 
-# --- Auth schemas ---
-
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 128
+
 
 def _clean_email(value):
     return value.strip().lower() if isinstance(value, str) else ""
 
 
 def validate_register(data):
-    """Expects {name | username, email, password}. Returns {name, email, password}."""
     errors = {}
-
-    name = data.get("name") or data.get("username")  # frontend uses both names
+    name = data.get("name") or data.get("username")
     name = name.strip() if isinstance(name, str) else ""
     if not name:
         errors["name"] = "Name is required"
@@ -52,26 +47,21 @@ def validate_register(data):
 
 
 def validate_login(data):
-    """Expects {email, password}. Returns {email, password}."""
     errors = {}
     email = _clean_email(data.get("email"))
     password = data.get("password")
-
     if not email:
         errors["email"] = "Email is required"
     if not isinstance(password, str) or not password:
         errors["password"] = "Password is required"
-
     if errors:
         raise ValidationError(errors)
     return {"email": email, "password": password}
 
 
-
-# --- Task schemas ---
-
 PRIORITIES = ("low", "medium", "high")
-STATUSES = ("todo", "in_progress", "done")
+STATUSES = ("todo", "in_progress", "in_review", "done")
+ISSUE_TYPES = ("epic", "story", "task", "bug")
 
 _STATUS_ALIASES = {
     "todo": "todo",
@@ -80,6 +70,9 @@ _STATUS_ALIASES = {
     "in_progress": "in_progress",
     "inprogress": "in_progress",
     "doing": "in_progress",
+    "in_review": "in_review",
+    "inreview": "in_review",
+    "review": "in_review",
     "done": "done",
     "complete": "done",
     "completed": "done",
@@ -87,7 +80,6 @@ _STATUS_ALIASES = {
 
 
 def normalize_status(value):
-    """'To do' / 'in-progress' / 'DONE' -> 'todo' / 'in_progress' / 'done'. None if invalid."""
     if not isinstance(value, str):
         return None
     key = value.strip().lower().replace("-", "_").replace(" ", "_")
@@ -95,15 +87,20 @@ def normalize_status(value):
 
 
 def normalize_priority(value):
-    """'High' -> 'high'. None if invalid."""
     if not isinstance(value, str):
         return None
     key = value.strip().lower()
     return key if key in PRIORITIES else None
 
 
+def normalize_issue_type(value):
+    if not isinstance(value, str):
+        return None
+    key = value.strip().lower()
+    return key if key in ISSUE_TYPES else None
+
+
 def parse_due_date(value):
-    """'2026-11-20' (or a full ISO timestamp) -> date. None/'' -> None. Raises ValueError."""
     if value is None or value == "":
         return None
     if not isinstance(value, str) or len(value) < 10:
@@ -120,7 +117,6 @@ def parse_project_id(value):
 
 
 def _present(data, *names):
-    """(True, value) for the first key found in data, else (False, None)."""
     for name in names:
         if name in data:
             return True, data[name]
@@ -128,12 +124,6 @@ def _present(data, *names):
 
 
 def validate_task(data, partial=False):
-    """
-    Create: validate_task(data)                -> every field filled (with defaults)
-    Update: validate_task(data, partial=True)  -> only the fields that were sent
-
-    Accepts due_date or dueDate, project_id or projectId.
-    """
     cleaned, errors = {}, {}
 
     found, title = _present(data, "title")
@@ -145,7 +135,6 @@ def validate_task(data, partial=False):
             errors["title"] = "Title must be 200 characters or fewer"
         else:
             cleaned["title"] = title
-
 
     found, description = _present(data, "description")
     if found:
@@ -172,11 +161,37 @@ def validate_task(data, partial=False):
     if found:
         normalized = normalize_status(status)
         if normalized is None:
-            errors["status"] = "Status must be todo, in_progress or done"
+            errors["status"] = "Status must be todo, in_progress, in_review or done"
         else:
             cleaned["status"] = normalized
     elif not partial:
         cleaned["status"] = "todo"
+
+    found, division = _present(data, "division", "epic")
+    if found:
+        cleaned["division"] = (str(division).strip() if division else "General")[:80] or "General"
+    elif not partial:
+        cleaned["division"] = "General"
+
+    found, issue_type = _present(data, "issue_type", "issueType", "type")
+    if found:
+        normalized_type = normalize_issue_type(issue_type)
+        if normalized_type is None:
+            errors["issue_type"] = "Issue type must be epic, story, task or bug"
+        else:
+            cleaned["issue_type"] = normalized_type
+    elif not partial:
+        cleaned["issue_type"] = "task"
+
+    found, points = _present(data, "story_points", "storyPoints", "points")
+    if found:
+        try:
+            pts = int(points) if points not in (None, "") else 1
+            cleaned["story_points"] = max(1, min(pts, 100))
+        except (TypeError, ValueError):
+            errors["story_points"] = "Story points must be a number"
+    elif not partial:
+        cleaned["story_points"] = 1
 
     found, due = _present(data, "due_date", "dueDate")
     if found:
@@ -200,8 +215,8 @@ def validate_task(data, partial=False):
         raise ValidationError(errors)
     return cleaned
 
+
 def _iso_datetime(value):
-    """Datetime -> '2026-11-19T10:30:00Z' (naive values are treated as UTC)."""
     if not value:
         return None
     if value.tzinfo is None:
@@ -210,21 +225,26 @@ def _iso_datetime(value):
 
 
 def task_to_dict(task):
-    """What the frontend (useTasks) receives for a task."""
     project = getattr(task, "project", None)
+    key_prefix = (getattr(project, "project_key", None) or "FF").upper() if project else "FF"
     return {
         "id": task.id,
+        "issue_key": f"{key_prefix}-{task.id}",
         "title": task.title,
-        "description": task.description or "",
+        "description": getattr(task, "description", "") or "",
+        "division": getattr(task, "division", "General") or "General",
+        "issue_type": getattr(task, "issue_type", "task") or "task",
+        "story_points": getattr(task, "story_points", 1) or 1,
         "priority": task.priority,
         "status": task.status,
         "due_date": task.due_date.isoformat() if task.due_date else None,
         "completed_at": _iso_datetime(task.completed_at),
         "project_id": task.project_id,
-        "project_name": project.name if project is not None else None,
+        "project_name": project.title if project is not None else None,
         "created_at": _iso_datetime(getattr(task, "created_at", None)),
         "updated_at": _iso_datetime(getattr(task, "updated_at", None)),
     }
+
 
 def user_to_dict(user):
     return {
