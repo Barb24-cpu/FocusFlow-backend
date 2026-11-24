@@ -1,32 +1,36 @@
-# TODO: Implement this file
 import httpx
-from fastapi import HTTPException, status
 from app.security import decrypt_token
+
+
+class GitHubServiceError(Exception):
+    def __init__(self, message: str, status_code: int = 400):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
 
 
 class GitHubService:
     BASE_URL = "https://api.github.com"
 
     def __init__(self, encrypted_token: str | None = None, raw_token: str | None = None):
+        token = None
         if raw_token:
             token = raw_token
-        elif encrypted_token:
+        elif encrypted_token and encrypted_token != "public_only":
             token = decrypt_token(encrypted_token)
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="GitHub access token is missing",
-            )
 
+        self.has_token = bool(token)
         self.headers = {
-            "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "FocusFlow-App",
         }
+        if token:
+            self.headers["Authorization"] = f"Bearer {token}"
 
-    async def _request(self, method: str, path: str, params: dict | None = None):
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.request(
+    def _request(self, method: str, path: str, params: dict | None = None):
+        with httpx.Client(timeout=10.0) as client:
+            response = client.request(
                 method=method,
                 url=f"{self.BASE_URL}{path}",
                 headers=self.headers,
@@ -34,49 +38,52 @@ class GitHubService:
             )
 
         if response.status_code == 401:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="GitHub token is invalid or expired. Please reconnect your account.",
-            )
+            raise GitHubServiceError("GitHub token is invalid or expired.", 401)
         if response.status_code == 403:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="GitHub API rate limit exceeded or insufficient token scopes.",
-            )
+            raise GitHubServiceError("GitHub API rate limit exceeded. Try again shortly or add a token.", 403)
         if response.status_code == 404:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Requested GitHub resource or repository was not found.",
-            )
+            raise GitHubServiceError("GitHub user or repository not found.", 404)
         if response.status_code >= 400:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail="GitHub API request failed.",
-            )
+            raise GitHubServiceError("GitHub API request failed.", response.status_code)
 
         return response.json()
 
-    async def verify_token_and_get_user(self) -> dict:
-        """Validates a newly supplied PAT during /api/github/connect."""
-        data = await self._request("GET", "/user")
+    def verify_user(self, github_username: str | None = None) -> dict:
+        if self.has_token and not github_username:
+            data = self._request("GET", "/user")
+        elif github_username:
+            data = self._request("GET", f"/users/{github_username}")
+        else:
+            raise GitHubServiceError("Please provide a GitHub username.", 400)
+
         return {
             "github_username": data.get("login"),
+            "name": data.get("name"),
+            "bio": data.get("bio"),
             "avatar_url": data.get("avatar_url"),
             "profile_url": data.get("html_url"),
+            "public_repos": data.get("public_repos", 0),
+            "followers": data.get("followers", 0),
         }
 
-    async def list_repositories(self, per_page: int = 30) -> list[dict]:
-        """Fetches authenticated user's repositories formatted for FocusFlow Projects."""
-        repos = await self._request(
-            "GET",
-            "/user/repos",
-            params={"sort": "updated", "affiliation": "owner,collaborator", "per_page": per_page},
-        )
+    def list_repositories(self, github_username: str, per_page: int = 30) -> list[dict]:
+        if self.has_token:
+            repos = self._request(
+                "GET",
+                "/user/repos",
+                params={"sort": "updated", "affiliation": "owner,collaborator", "per_page": per_page},
+            )
+        else:
+            repos = self._request(
+                "GET",
+                f"/users/{github_username}/repos",
+                params={"sort": "updated", "type": "owner", "per_page": per_page},
+            )
         return [
             {
                 "id": repo["id"],
                 "name": repo["name"],
-                "full_name": repo["full_name"],  # Matches projects.github_repo ("owner/repo")
+                "full_name": repo["full_name"],
                 "description": repo.get("description"),
                 "private": repo["private"],
                 "language": repo.get("language"),
@@ -88,9 +95,8 @@ class GitHubService:
             for repo in repos
         ]
 
-    async def get_repo_commits(self, owner: str, repo: str, per_page: int = 20) -> list[dict]:
-        """Fetches recent commits for a specific repository."""
-        commits = await self._request(
+    def get_repo_commits(self, owner: str, repo: str, per_page: int = 15) -> list[dict]:
+        commits = self._request(
             "GET",
             f"/repos/{owner}/{repo}/commits",
             params={"per_page": per_page},
@@ -108,13 +114,12 @@ class GitHubService:
             for item in commits
         ]
 
-    async def list_open_issues(self, github_username: str, per_page: int = 20) -> list[dict]:
-        """Fetches open issues authored by or assigned to the connected GitHub user."""
-        data = await self._request(
+    def list_open_issues(self, github_username: str, per_page: int = 15) -> list[dict]:
+        data = self._request(
             "GET",
             "/search/issues",
             params={
-                "q": f"involves:{github_username} is:issue is:open",
+                "q": f"author:{github_username} is:issue is:open",
                 "sort": "updated",
                 "order": "desc",
                 "per_page": per_page,
@@ -135,13 +140,12 @@ class GitHubService:
             for issue in data.get("items", [])
         ]
 
-    async def list_pull_requests(self, github_username: str, per_page: int = 20) -> list[dict]:
-        """Fetches open pull requests involving the connected GitHub user."""
-        data = await self._request(
+    def list_pull_requests(self, github_username: str, per_page: int = 15) -> list[dict]:
+        data = self._request(
             "GET",
             "/search/issues",
             params={
-                "q": f"involves:{github_username} is:pr is:open",
+                "q": f"author:{github_username} is:pr is:open",
                 "sort": "updated",
                 "order": "desc",
                 "per_page": per_page,
