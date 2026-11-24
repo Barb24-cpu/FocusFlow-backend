@@ -5,7 +5,7 @@ from flask import g, jsonify, request
 from app.models import User
 from app.security import decode_access_token
 
-COOKIE_NAME = "access_token"
+COOKIE_NAME = "token"
 
 
 def error_response(message, status=400, errors=None):
@@ -50,6 +50,8 @@ def current_user():
     try:
         payload = decode_access_token(token)
     except Exception:
+        return None
+    if not payload:
         return None
     user_id = payload.get("user_id") or payload.get("sub")
     if not user_id:

@@ -13,7 +13,7 @@ app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///focusflow.db"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["JWT_SECRET_KEY"] = settings.JWT_SECRET_KEY
 app.config["JWT_ALGORITHM"] = settings.JWT_ALGORITHM
-CORS(app, supports_credentials=True)
+CORS(app, supports_credentials=True, origins=["http://localhost:5173"])
 db.init_app(app)
 
 # --- Register Flask Blueprints (SKIP github.py - it's FastAPI, will crash app) ---
