@@ -64,3 +64,13 @@ class Subscription(db.Model):
     cancel_at_period_end = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class GitHubAccount(db.Model):
+    __tablename__ = "github_accounts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), unique=True, nullable=False)
+    github_username = db.Column(db.String(100), nullable=False)
+    access_token_encrypted = db.Column(db.Text, nullable=False, default="public_only")
+    connected_at = db.Column(db.DateTime, default=datetime.utcnow)

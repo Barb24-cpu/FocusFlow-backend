@@ -1,157 +1,149 @@
-# TODO: Implement this file
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from flask import Blueprint, jsonify, request
+from flask_jwt_extended import get_jwt_identity, jwt_required
 
-from app.database import get_db
-from app.deps import get_current_user
-from app.models import GitHubAccount, User
+from app.database import db
+from app.models import GitHubAccount
 from app.security import encrypt_token
-from app.services.github_service import GitHubService
+from app.services.github_service import GitHubService, GitHubServiceError
 
-router = APIRouter()
-
-
-# --- Pydantic Request / Response Schemas ---
-
-class GitHubConnectRequest(BaseModel):
-    access_token: str = Field(..., min_length=10, description="GitHub Personal Access Token")
-    github_username: str | None = Field(
-        default=None,
-        description="Optional override; if omitted, resolved directly from GitHub /user",
-    )
+github_bp = Blueprint("github", __name__, url_prefix="/api/github")
 
 
-class GitHubConnectionResponse(BaseModel):
-    connected: bool
-    github_username: str
-    connected_at: datetime
+def _clean_github_username(raw: str) -> str:
+    val = (raw or "").strip().rstrip("/")
+    if "github.com/" in val:
+        val = val.split("github.com/")[-1].split("/")[0]
+    return val.lstrip("@")
 
 
-# --- Helper Dependency ---
+def _get_user_github_account(user_id: int) -> GitHubAccount | None:
+    return GitHubAccount.query.filter_by(user_id=user_id).first()
 
-def get_user_github_account(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> GitHubAccount:
-    account = (
-        db.query(GitHubAccount)
-        .filter(GitHubAccount.user_id == current_user.id)
-        .first()
-    )
+
+@github_bp.errorhandler(GitHubServiceError)
+def handle_github_error(err: GitHubServiceError):
+    return jsonify({"error": err.message}), err.status_code
+
+
+@github_bp.route("/status", methods=["GET"])
+@jwt_required()
+def github_connection_status():
+    user_id = int(get_jwt_identity())
+    account = _get_user_github_account(user_id)
     if not account:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="GitHub account is not connected. Call POST /api/github/connect first.",
-        )
-    return account
+        return jsonify({"connected": False}), 200
+
+    service = GitHubService(encrypted_token=account.access_token_encrypted)
+    profile = service.verify_user(github_username=account.github_username)
+    return jsonify({
+        "connected": True,
+        "github_username": account.github_username,
+        "connected_at": account.connected_at.isoformat() if account.connected_at else None,
+        "profile": profile,
+    }), 200
 
 
-# --- Section 7 Endpoints ---
+@github_bp.route("/connect", methods=["POST"])
+@jwt_required()
+def connect_github_account():
+    user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+    github_username = _clean_github_username(data.get("github_username", ""))
+    access_token = (data.get("access_token") or "").strip()
 
-@router.post("/connect", response_model=GitHubConnectionResponse, status_code=status.HTTP_201_CREATED)
-async def connect_github_account(
-    payload: GitHubConnectRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """POST /api/github/connect — Verify PAT, encrypt token, and link GitHub account."""
-    gh_service = GitHubService(raw_token=payload.access_token)
-    gh_profile = await gh_service.verify_token_and_get_user()
+    if not github_username and not access_token:
+        return jsonify({"error": "Please enter your GitHub username."}), 400
 
-    resolved_username = payload.github_username or gh_profile["github_username"]
-    encrypted = encrypt_token(payload.access_token)
+    gh_service = GitHubService(raw_token=access_token or None)
+    gh_profile = gh_service.verify_user(github_username=github_username or None)
 
-    existing = (
-        db.query(GitHubAccount)
-        .filter(GitHubAccount.user_id == current_user.id)
-        .first()
-    )
+    resolved_username = gh_profile["github_username"]
+    encrypted = encrypt_token(access_token) if access_token else "public_only"
 
-    if existing:
-        existing.github_username = resolved_username
-        existing.access_token_encrypted = encrypted
-        existing.connected_at = datetime.utcnow()
-        account = existing
+    account = _get_user_github_account(user_id)
+    if account:
+        account.github_username = resolved_username
+        account.access_token_encrypted = encrypted
+        account.connected_at = datetime.utcnow()
     else:
         account = GitHubAccount(
-            user_id=current_user.id,
+            user_id=user_id,
             github_username=resolved_username,
             access_token_encrypted=encrypted,
             connected_at=datetime.utcnow(),
         )
-        db.add(account)
+        db.session.add(account)
 
-    db.commit()
-    db.refresh(account)
+    db.session.commit()
+    return jsonify({
+        "connected": True,
+        "github_username": account.github_username,
+        "connected_at": account.connected_at.isoformat(),
+        "profile": gh_profile,
+    }), 201
 
-    return GitHubConnectionResponse(
-        connected=True,
-        github_username=account.github_username,
-        connected_at=account.connected_at,
-    )
 
-
-@router.delete("/disconnect", status_code=status.HTTP_200_OK)
-def disconnect_github_account(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """DELETE /api/github/disconnect — Remove user's GitHub connection."""
-    account = (
-        db.query(GitHubAccount)
-        .filter(GitHubAccount.user_id == current_user.id)
-        .first()
-    )
+@github_bp.route("/disconnect", methods=["DELETE"])
+@jwt_required()
+def disconnect_github_account():
+    user_id = int(get_jwt_identity())
+    account = _get_user_github_account(user_id)
     if not account:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No connected GitHub account found.",
-        )
+        return jsonify({"error": "No connected GitHub account found."}), 404
 
-    db.delete(account)
-    db.commit()
-    return {"connected": False, "message": "GitHub account disconnected successfully."}
+    db.session.delete(account)
+    db.session.commit()
+    return jsonify({"connected": False, "message": "GitHub account disconnected successfully."}), 200
 
 
-@router.get("/repositories")
-async def list_github_repositories(
-    account: GitHubAccount = Depends(get_user_github_account),
-):
-    """GET /api/github/repositories — List repositories for the connected GitHub user."""
+@github_bp.route("/repositories", methods=["GET"])
+@jwt_required()
+def list_github_repositories():
+    user_id = int(get_jwt_identity())
+    account = _get_user_github_account(user_id)
+    if not account:
+        return jsonify({"error": "GitHub account is not connected."}), 404
+
     service = GitHubService(encrypted_token=account.access_token_encrypted)
-    repositories = await service.list_repositories()
-    return {"github_username": account.github_username, "repositories": repositories}
+    repositories = service.list_repositories(github_username=account.github_username)
+    return jsonify({"github_username": account.github_username, "repositories": repositories}), 200
 
 
-@router.get("/repositories/{owner}/{repo}/commits")
-async def get_repository_commits(
-    owner: str,
-    repo: str,
-    account: GitHubAccount = Depends(get_user_github_account),
-):
-    """GET /api/github/repositories/:owner/:repo/commits — Fetch recent commits."""
+@github_bp.route("/repositories/<owner>/<repo>/commits", methods=["GET"])
+@jwt_required()
+def get_repository_commits(owner: str, repo: str):
+    user_id = int(get_jwt_identity())
+    account = _get_user_github_account(user_id)
+    if not account:
+        return jsonify({"error": "GitHub account is not connected."}), 404
+
     service = GitHubService(encrypted_token=account.access_token_encrypted)
-    commits = await service.get_repo_commits(owner=owner, repo=repo)
-    return {"repository": f"{owner}/{repo}", "commits": commits}
+    commits = service.get_repo_commits(owner=owner, repo=repo)
+    return jsonify({"repository": f"{owner}/{repo}", "commits": commits}), 200
 
 
-@router.get("/issues")
-async def list_github_issues(
-    account: GitHubAccount = Depends(get_user_github_account),
-):
-    """GET /api/github/issues — Fetch open issues for the connected GitHub user."""
+@github_bp.route("/issues", methods=["GET"])
+@jwt_required()
+def list_github_issues():
+    user_id = int(get_jwt_identity())
+    account = _get_user_github_account(user_id)
+    if not account:
+        return jsonify({"error": "GitHub account is not connected."}), 404
+
     service = GitHubService(encrypted_token=account.access_token_encrypted)
-    issues = await service.list_open_issues(github_username=account.github_username)
-    return {"github_username": account.github_username, "issues": issues}
+    issues = service.list_open_issues(github_username=account.github_username)
+    return jsonify({"github_username": account.github_username, "issues": issues}), 200
 
 
-@router.get("/pulls")
-async def list_github_pull_requests(
-    account: GitHubAccount = Depends(get_user_github_account),
-):
-    """GET /api/github/pulls — Fetch open pull requests for the connected GitHub user."""
+@github_bp.route("/pulls", methods=["GET"])
+@jwt_required()
+def list_github_pull_requests():
+    user_id = int(get_jwt_identity())
+    account = _get_user_github_account(user_id)
+    if not account:
+        return jsonify({"error": "GitHub account is not connected."}), 404
+
     service = GitHubService(encrypted_token=account.access_token_encrypted)
-    pulls = await service.list_pull_requests(github_username=account.github_username)
-    return {"github_username": account.github_username, "pulls": pulls}
+    pulls = service.list_pull_requests(github_username=account.github_username)
+    return jsonify({"github_username": account.github_username, "pulls": pulls}), 200
