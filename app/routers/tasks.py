@@ -3,9 +3,9 @@ from flask import Blueprint, jsonify, request
 
 from app.database import db
 from app.deps import current_user, error_response, login_required
-from app.models import task
+from app.models import Task
 from app.schemas import (
-    validationError,
+    ValidationError,
     normalize_priority,
     task_to_dict,
     validate_task,

@@ -147,7 +147,7 @@ def validate_task(data, partial=False):
             cleaned["title"] = title
 
 
-found, description = _present(data, "description")
+    found, description = _present(data, "description")
     if found:
         if description is None:
             cleaned["description"] = ""
@@ -224,4 +224,12 @@ def task_to_dict(task):
         "project_name": project.name if project is not None else None,
         "created_at": _iso_datetime(getattr(task, "created_at", None)),
         "updated_at": _iso_datetime(getattr(task, "updated_at", None)),
+    }
+
+def user_to_dict(user):
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
     }

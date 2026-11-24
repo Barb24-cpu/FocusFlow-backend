@@ -31,7 +31,7 @@ def login_required(view):
 
     @wraps(view)
     def wrapper(*args, **kwargs):
-        user = get_current_user()
+        user = current_user()
         if user is None:
             return error_response("Authentication required", 401)
         g.current_user = user
@@ -41,5 +41,22 @@ def login_required(view):
 
 
 def current_user():
-    """The user set by @login_required. Only call this inside a protected view."""
-    return g.get("current_user")
+    """Load the logged-in user from the access_token cookie / Bearer header."""
+    if "current_user" in g:
+        return g.current_user
+    token = _get_token()
+    if not token:
+        return None
+    try:
+        payload = decode_access_token(token)
+    except Exception:
+        return None
+    user_id = payload.get("user_id") or payload.get("sub")
+    if not user_id:
+        return None
+    try:
+        user = User.query.get(int(user_id))
+    except Exception:
+        return None
+    g.current_user = user
+    return user

@@ -12,5 +12,5 @@ class Config:
     JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 
 
-
+# alias so `from app.config import settings` works
 settings = Config
