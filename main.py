@@ -82,18 +82,18 @@ def create_app() -> Flask:
     if JWTManager is not None:
         JWTManager(app)
 
-    app.register_blueprint(auth_bp)
+    app.register_blueprint(auth_bp, url_prefix="/api")
 
     if github_bp is not None:
-        app.register_blueprint(github_bp)
+        app.register_blueprint(github_bp, url_prefix="/api")
     if tasks_bp is not None:
-        app.register_blueprint(tasks_bp)
+        app.register_blueprint(tasks_bp, url_prefix="/api")
     if projects_bp is not None:
-        app.register_blueprint(projects_bp)
+        app.register_blueprint(projects_bp, url_prefix="/api")
     if notes_bp is not None:
-        app.register_blueprint(notes_bp)
+        app.register_blueprint(notes_bp, url_prefix="/api")
     if analytics_bp is not None:
-        app.register_blueprint(analytics_bp)
+        app.register_blueprint(analytics_bp, url_prefix="/api")
 
     @app.get("/")
     def index():
