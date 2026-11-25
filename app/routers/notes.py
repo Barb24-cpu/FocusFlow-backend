@@ -50,7 +50,8 @@ def get_notes():
     if project_id is not None:
         query = query.filter_by(project_id=project_id)
 
-    notes = query.order_by(Note.updated_at.desc()).all()
+    order_col = getattr(Note, "updated_at", Note.created_at)
+    notes = query.order_by(order_col.desc()).all()
 
     return jsonify([note_to_dict(n) for n in notes]), 200
 

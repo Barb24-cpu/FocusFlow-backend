@@ -7,6 +7,11 @@ from app.database import db
 from app.routers.auth import auth_bp
 
 try:
+    from flask_jwt_extended import JWTManager
+except ImportError:
+    JWTManager = None
+
+try:
     from app.routers.github import github_bp
 except ImportError:
     github_bp = None
@@ -44,12 +49,13 @@ def create_app() -> Flask:
     app.config["ACCESS_TOKEN_EXPIRE_MINUTES"] = getattr(
         settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 60 * 24
     )
+    app.config["JWT_TOKEN_LOCATION"] = ["cookies", "headers"]
+    app.config["JWT_ACCESS_COOKIE_NAME"] = "token"
     app.config["COOKIE_SECURE"] = False
     app.config["COOKIE_SAMESITE"] = "Lax"
     app.config["JWT_COOKIE_SECURE"] = False
     app.config["JWT_COOKIE_SAMESITE"] = "Lax"
     app.config["JWT_COOKIE_CSRF_PROTECT"] = False
-    app.config["JWT_ACCESS_COOKIE_NAME"] = "token"
 
     allowed_origins = [
         "http://localhost:5173",
@@ -70,6 +76,9 @@ def create_app() -> Flask:
 
     db.init_app(app)
 
+    if JWTManager is not None:
+        JWTManager(app)
+
     app.register_blueprint(auth_bp)
 
     if github_bp is not None:
@@ -82,6 +91,10 @@ def create_app() -> Flask:
         app.register_blueprint(notes_bp)
     if analytics_bp is not None:
         app.register_blueprint(analytics_bp)
+
+    @app.get("/")
+    def index():
+        return jsonify({"service": "FocusFlow API", "status": "ok"}), 200
 
     @app.get("/api/health")
     def health():
