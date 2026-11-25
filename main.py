@@ -85,15 +85,15 @@ def create_app() -> Flask:
     app.register_blueprint(auth_bp, url_prefix="/api")
 
     if github_bp is not None:
-        app.register_blueprint(github_bp, url_prefix="/api")
+        app.register_blueprint(github_bp, url_prefix="/api/github")
     if tasks_bp is not None:
-        app.register_blueprint(tasks_bp, url_prefix="/api")
+        app.register_blueprint(tasks_bp, url_prefix="/api/tasks")
     if projects_bp is not None:
-        app.register_blueprint(projects_bp, url_prefix="/api")
+        app.register_blueprint(projects_bp, url_prefix="/api/projects")
     if notes_bp is not None:
-        app.register_blueprint(notes_bp, url_prefix="/api")
+        app.register_blueprint(notes_bp, url_prefix="/api/notes")
     if analytics_bp is not None:
-        app.register_blueprint(analytics_bp, url_prefix="/api")
+        app.register_blueprint(analytics_bp, url_prefix="/api/analytics")
 
     @app.get("/")
     def index():
