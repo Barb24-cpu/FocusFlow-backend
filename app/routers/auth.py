@@ -6,7 +6,7 @@ from app.models import User
 from app.schemas import ValidationError, user_to_dict, validate_login, validate_register
 from app.security import create_access_token, hash_password, verify_password
 
-auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
+auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
 
 
 def _json_body():

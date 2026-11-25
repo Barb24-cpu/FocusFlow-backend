@@ -8,3 +8,4 @@ instance/
 venv/
 instance/
 instance/
+instance/*.db
