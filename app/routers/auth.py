@@ -1,14 +1,3 @@
-# TODO: Implement this file
-"""
-routers/auth.py - Register, login, logout and "who am I" endpoints (FF-2).
-
-Endpoints (the frontend's authService.js calls exactly these):
-    POST /auth/register   {name | username, email, password}  -> 201 {"user": {...}}
-    POST /auth/login      {email, password}                   -> 200 {"user": {...}} + httpOnly cookie
-    POST /auth/logout                                         -> 200 {"message": ...} + cookie cleared
-    GET  /auth/me                                             -> 200 {"user": {...}} or 401
-
-"""
 from flask import Blueprint, current_app, jsonify, request
 
 from app.database import db
@@ -16,6 +5,31 @@ from app.deps import COOKIE_NAME, current_user, error_response, login_required
 from app.models import User
 from app.schemas import ValidationError, user_to_dict, validate_login, validate_register
 from app.security import create_access_token, hash_password, verify_password
+
+
+import re
+
+def validate_password(password):
+    """Returns an error message if the password is weak, otherwise None."""
+    if not isinstance(password, str):
+        return "Password is required"
+
+    problems = []
+    if len(password) < 8:
+        problems.append("be at least 8 characters long")
+    if not re.search(r"[A-Z]", password):
+        problems.append("contain an uppercase letter")
+    if not re.search(r"[a-z]", password):
+        problems.append("contain a lowercase letter")
+    if not re.search(r"\d", password):
+        problems.append("contain a number")
+    if not re.search(r"[^A-Za-z0-9\s]", password):
+        problems.append("contain a special character (e.g. ! @ # $ %)")
+
+    if problems:
+        return "Password must " + ", ".join(problems)
+    return None
+
 
 auth_bp =Blueprint("auth", __name__, url_prefix="/auth")
 
@@ -53,6 +67,10 @@ def register():
             409,
             {"email": "An account with this email already exists"},
         )
+
+    password_error = validate_password(data.get("password"))
+    if password_error:
+         return jsonify({"error": password_error}), 400
 
     user = User(
         name=data["name"],
