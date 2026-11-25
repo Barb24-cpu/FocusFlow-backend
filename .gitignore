@@ -9,3 +9,5 @@ venv/
 instance/
 instance/
 instance/*.db
+instance/
+*.db
