@@ -1,4 +1,5 @@
 from flask import Blueprint, current_app, jsonify, request
+from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
 
 from app.database import db
 from app.deps import COOKIE_NAME, current_user, error_response, login_required
@@ -118,4 +119,23 @@ def logout():
 @login_required
 def me():
     return jsonify({"user": user_to_dict(current_user())})
+
+@auth_bp.route("/me", methods=["PUT"])
+@jwt_required()
+def update_me():
+
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    data = request.get_json() or {}
+    # only allow these fields to be changed
+    for field in ["name", "username", "bio", "github", "location", "age", "avatar", "profilePic"]:
+        if field in data:
+            setattr(user, field, data[field])
+
+    db.session.commit()
+    return jsonify({"user": user.to_dict()}), 200
+
 

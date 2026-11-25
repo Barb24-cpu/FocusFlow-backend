@@ -1,60 +1,115 @@
-from app.config import settings
-from flask_jwt_extended import JWTManager
+import os
 from flask import Flask, jsonify
 from flask_cors import CORS
+from flask_jwt_extended import JWTManager
+
+from app.config import settings
 from app.database import db
-
-app = Flask(__name__)
-jwt = JWTManager(app)
-app.config["JWT_TOKEN_LOCATION"] = ["headers", "cookies"]
-app.config["JWT_COOKIE_CSRF_PROTECT"] = False
-app.config["JWT_ACCESS_COOKIE_NAME"] = "token"
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///focusflow.db"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["JWT_SECRET_KEY"] = settings.JWT_SECRET_KEY
-app.config["JWT_ALGORITHM"] = settings.JWT_ALGORITHM
-CORS(app, supports_credentials=True, origins=["http://localhost:5173"])
-db.init_app(app)
-
-# --- Register Flask Blueprints (SKIP github.py - it's FastAPI, will crash app) ---
 from app.routers.auth import auth_bp
-from app.routers.github import github_bp
-from app.routers.projects import projects_bp
-from app.routers.tasks import tasks_bp
-from app.routers.focus import focus_bp
-from app.routers.notes import notes_bp
-from app.routers.analytics import analytics_bp
-from app.routers.subscriptions import subscription_bp
 
-app.register_blueprint(auth_bp)
-app.register_blueprint(github_bp)
-app.register_blueprint(projects_bp)
-app.register_blueprint(tasks_bp)
-app.register_blueprint(focus_bp)
-app.register_blueprint(notes_bp)
-app.register_blueprint(analytics_bp)
-app.register_blueprint(subscription_bp)
-with app.app_context():
-   from app import models
-   db.create_all()
+try:
+    from flask_jwt_extended import JWTManager
+except ImportError:
+    JWTManager = None
 
-@app.route('/')
-def home():
-    return {"message": "FocusFlow Backend is running!"}
+try:
+    from app.routers.github import github_bp
+except ImportError:
+    github_bp = None
+
+try:
+    from app.routers.tasks import tasks_bp
+except ImportError:
+    tasks_bp = None
+
+try:
+    from app.routers.projects import projects_bp
+except ImportError:
+    projects_bp = None
+
+try:
+    from app.routers.notes import notes_bp
+except ImportError:
+    notes_bp = None
+
+try:
+    from app.routers.analytics import analytics_bp
+except ImportError:
+    analytics_bp = None
 
 
-@app.before_request
-def _handle_cors_preflight():
-    from flask import request
-    if request.method == "OPTIONS":
-        resp = app.make_default_options_response()
-        origin = request.headers.get("Origin")
-        if origin in ("http://localhost:5173", "http://127.0.0.1:5173"):
-            resp.headers["Access-Control-Allow-Origin"] = origin
-            resp.headers["Access-Control-Allow-Credentials"] = "true"
-            resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        return resp
+def create_app() -> Flask:
+    app = Flask(__name__)
 
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.config["SQLALCHEMY_DATABASE_URI"] = getattr(
+        settings, "SQLALCHEMY_DATABASE_URI", os.environ.get("DATABASE_URL", "sqlite:///focusflow.db")
+    )
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["SECRET_KEY"] = getattr(settings, "JWT_SECRET_KEY", "focusflow-secret")
+    app.config["JWT_SECRET_KEY"] = getattr(settings, "JWT_SECRET_KEY", app.config["SECRET_KEY"])
+    app.config["JWT_ALGORITHM"] = getattr(settings, "JWT_ALGORITHM", "HS256")
+    app.config["ACCESS_TOKEN_EXPIRE_MINUTES"] = getattr(
+        settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 60 * 24
+    )
+    app.config["JWT_TOKEN_LOCATION"] = ["cookies", "headers"]
+    app.config["JWT_ACCESS_COOKIE_NAME"] = "token"
+    app.config["COOKIE_SECURE"] = False
+    app.config["COOKIE_SAMESITE"] = "Lax"
+    app.config["JWT_COOKIE_SECURE"] = False
+    app.config["JWT_COOKIE_SAMESITE"] = "Lax"
+    app.config["JWT_COOKIE_CSRF_PROTECT"] = False
+
+    allowed_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
+    CORS(
+        app,
+        resources={r"/*": {"origins": allowed_origins}},
+        supports_credentials=True,
+        allow_headers=["Content-Type", "Authorization"],
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    )
+
+    db.init_app(app)
+    JWTManager(app)
+
+    if JWTManager is not None:
+        JWTManager(app)
+
+    app.register_blueprint(auth_bp, url_prefix="/api")
+
+    if github_bp is not None:
+        app.register_blueprint(github_bp, url_prefix="/api")
+    if tasks_bp is not None:
+        app.register_blueprint(tasks_bp, url_prefix="/api")
+    if projects_bp is not None:
+        app.register_blueprint(projects_bp, url_prefix="/api")
+    if notes_bp is not None:
+        app.register_blueprint(notes_bp, url_prefix="/api")
+    if analytics_bp is not None:
+        app.register_blueprint(analytics_bp, url_prefix="/api")
+
+    @app.get("/")
+    def index():
+        return jsonify({"service": "FocusFlow API", "status": "ok"}), 200
+
+    @app.get("/api/health")
+    def health():
+        return jsonify({"status": "ok"}), 200
+
+    with app.app_context():
+        db.create_all()
+
+    return app
+
+
+app = create_app()
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
